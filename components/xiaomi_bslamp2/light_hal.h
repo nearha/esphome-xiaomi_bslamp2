@@ -66,22 +66,17 @@ class LightHAL : public Component, public GPIOOutputValues {
   /**
    * Check if the light is turned on.
    */
-  bool is_on() { return is_on_; }
+  bool is_on() {
+    return is_on_;
+  }
 
   void set_state(GPIOOutputValues *new_state) {
     new_state->copy_to(this);
-
-    red_pin_->set_level(scale_rgb_(this->red));
-    green_pin_->set_level(scale_rgb_(this->green));
-    blue_pin_->set_level(scale_rgb_(this->blue));
-    white_pin_->set_level(scale_white_(this->white));
+    apply_scaled_output_(this->red, this->green, this->blue, this->white);
   }
 
   void set_rgbw(float r, float g, float b, float w) {
-    red_pin_->set_level(scale_rgb_(r));
-    green_pin_->set_level(scale_rgb_(g));
-    blue_pin_->set_level(scale_rgb_(b));
-    white_pin_->set_level(scale_white_(w));
+    apply_scaled_output_(r, g, b, w);
 
     this->red = r;
     this->green = g;
@@ -89,35 +84,62 @@ class LightHAL : public Component, public GPIOOutputValues {
     this->white = w;
   }
 
-  void set_light_mode(std::string light_mode) { this->light_mode = light_mode; }
-
- protected:
-  // RGB neste hardware é invertido:
-  // 1.0 = apagado
-  // 0.0 = máximo
-  static constexpr float RGB_LIMIT = 0.35f;
-
-  // White é direto:
-  // 0.0 = apagado
-  // 1.0 = máximo
-  //
-  // Esses valores reproduzem aproximadamente o que ficou bom no teu teste:
-  // min_power: 6%
-  // max_power: 25%
-  static constexpr float WHITE_MIN = 0.06f;
-  static constexpr float WHITE_MAX = 0.25f;
-
-  float scale_rgb_(float level) {
-    float emitted = 1.0f - level;
-    emitted *= RGB_LIMIT;
-    return 1.0f - emitted;
+  void set_light_mode(std::string light_mode) {
+    this->light_mode = light_mode;
   }
 
-  float scale_white_(float level) {
-    if (level <= 0.0f)
-      return 0.0f;
+ protected:
+  // Faixa útil que você gostou no teste.
+  // O ponto mais forte do estado atual será remapeado para dentro dessa faixa.
+  static constexpr float OUTPUT_MIN = 0.06f;
+  static constexpr float OUTPUT_MAX = 0.25f;
 
-    return WHITE_MIN + ((WHITE_MAX - WHITE_MIN) * level);
+  // RGB neste hardware é invertido:
+  //   1.0 = apagado
+  //   0.0 = máximo
+  //
+  // White é direto:
+  //   0.0 = apagado
+  //   1.0 = máximo
+  //
+  // Para preservar a calibração original, escalamos TODOS os canais pelo
+  // MESMO fator, baseado no canal mais forte do estado atual.
+  void apply_scaled_output_(float r, float g, float b, float w) {
+    float red_emitted = 1.0f - r;
+    float green_emitted = 1.0f - g;
+    float blue_emitted = 1.0f - b;
+    float white_emitted = w;
+
+    float peak = red_emitted;
+    if (green_emitted > peak) peak = green_emitted;
+    if (blue_emitted > peak) peak = blue_emitted;
+    if (white_emitted > peak) peak = white_emitted;
+
+    // Tudo apagado
+    if (peak <= 0.0f) {
+      red_pin_->set_level(1.0f);
+      green_pin_->set_level(1.0f);
+      blue_pin_->set_level(1.0f);
+      white_pin_->set_level(0.0f);
+      return;
+    }
+
+    // Remapeia o pico original para a janela 6% -> 25%.
+    float target_peak = OUTPUT_MIN + ((OUTPUT_MAX - OUTPUT_MIN) * peak);
+
+    // Mesmo fator para todos os canais => preserva proporções / calibração.
+    float factor = target_peak / peak;
+
+    float red_scaled = red_emitted * factor;
+    float green_scaled = green_emitted * factor;
+    float blue_scaled = blue_emitted * factor;
+    float white_scaled = white_emitted * factor;
+
+    // Volta para o formato exigido pelos pinos.
+    red_pin_->set_level(1.0f - red_scaled);
+    green_pin_->set_level(1.0f - green_scaled);
+    blue_pin_->set_level(1.0f - blue_scaled);
+    white_pin_->set_level(white_scaled);
   }
 
   bool is_on_{false};
