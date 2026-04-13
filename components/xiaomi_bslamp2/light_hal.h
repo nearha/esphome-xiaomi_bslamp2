@@ -53,7 +53,7 @@ class LightHAL : public Component, public GPIOOutputValues {
     master2_pin_->turn_on();
     is_on_ = true;
   }
- 
+
   /**
    * Turn off the master switch for the LEDs.
    */
@@ -66,23 +66,22 @@ class LightHAL : public Component, public GPIOOutputValues {
   /**
    * Check if the light is turned on.
    */
-  bool is_on() {
-    return is_on_;
-  }
+  bool is_on() { return is_on_; }
 
   void set_state(GPIOOutputValues *new_state) {
     new_state->copy_to(this);
-    red_pin_->set_level(this->red);
-    green_pin_->set_level(this->green);
-    blue_pin_->set_level(this->blue);
-    white_pin_->set_level(this->white);
+
+    red_pin_->set_level(scale_rgb_(this->red));
+    green_pin_->set_level(scale_rgb_(this->green));
+    blue_pin_->set_level(scale_rgb_(this->blue));
+    white_pin_->set_level(scale_white_(this->white));
   }
 
   void set_rgbw(float r, float g, float b, float w) {
-    red_pin_->set_level(r);
-    green_pin_->set_level(g);
-    blue_pin_->set_level(b);
-    white_pin_->set_level(w);
+    red_pin_->set_level(scale_rgb_(r));
+    green_pin_->set_level(scale_rgb_(g));
+    blue_pin_->set_level(scale_rgb_(b));
+    white_pin_->set_level(scale_white_(w));
 
     this->red = r;
     this->green = g;
@@ -90,11 +89,37 @@ class LightHAL : public Component, public GPIOOutputValues {
     this->white = w;
   }
 
-  void set_light_mode(std::string light_mode) {
-    this->light_mode = light_mode;
-  }
+  void set_light_mode(std::string light_mode) { this->light_mode = light_mode; }
 
  protected:
+  // RGB neste hardware é invertido:
+  // 1.0 = apagado
+  // 0.0 = máximo
+  static constexpr float RGB_LIMIT = 0.35f;
+
+  // White é direto:
+  // 0.0 = apagado
+  // 1.0 = máximo
+  //
+  // Esses valores reproduzem aproximadamente o que ficou bom no teu teste:
+  // min_power: 6%
+  // max_power: 25%
+  static constexpr float WHITE_MIN = 0.06f;
+  static constexpr float WHITE_MAX = 0.25f;
+
+  float scale_rgb_(float level) {
+    float emitted = 1.0f - level;
+    emitted *= RGB_LIMIT;
+    return 1.0f - emitted;
+  }
+
+  float scale_white_(float level) {
+    if (level <= 0.0f)
+      return 0.0f;
+
+    return WHITE_MIN + ((WHITE_MAX - WHITE_MIN) * level);
+  }
+
   bool is_on_{false};
   ledc::LEDCOutput *red_pin_;
   ledc::LEDCOutput *green_pin_;
